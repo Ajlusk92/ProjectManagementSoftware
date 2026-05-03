@@ -1,2 +1,0 @@
-# ProjectManagementSoftware
-Project Management Software
