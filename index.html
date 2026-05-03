@@ -371,6 +371,19 @@
     margin: 4px;
   }
 
+
+
+  /* PROJECTS */
+  .project-toolbar { display:flex; gap:12px; align-items:center; justify-content:space-between; margin-bottom:20px; }
+  .project-grid { display:grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap:16px; }
+  .project-card { background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:18px; cursor:pointer; transition:all .15s; }
+  .project-card:hover { border-color:var(--accent); transform:translateY(-1px); }
+  .project-card.active { border-color:var(--accent); box-shadow:0 0 0 1px rgba(79,255,176,.18) inset; }
+  .project-name { font-family:var(--font-head); font-size:16px; font-weight:800; margin-bottom:6px; }
+  .project-meta { color:var(--muted); font-size:11px; line-height:1.6; }
+  .project-card-actions { display:flex; gap:8px; margin-top:14px; }
+  .project-select { min-width:240px; }
+
   /* EMPTY STATE */
   .empty-state {
     text-align: center;
@@ -426,6 +439,9 @@
 
   <div class="nav-section">
     <div class="nav-label">Overview</div>
+    <div class="nav-item" onclick="nav('projects')">
+      <span class="icon">▦</span> Projects
+    </div>
     <div class="nav-item active" onclick="nav('dashboard')">
       <span class="icon">⊞</span> Dashboard
     </div>
@@ -472,10 +488,26 @@
 <div class="main">
   <div class="topbar">
     <div class="topbar-title" id="page-title">Dashboard</div>
-    <div class="topbar-actions" id="topbar-actions"></div>
+    <div class="topbar-actions">
+      <select class="form-control project-select" id="project-switcher" onchange="switchProject(this.value)"></select>
+      <span id="topbar-actions"></span>
+    </div>
   </div>
 
   <div class="content">
+
+
+    <!-- PROJECTS -->
+    <div class="page" id="page-projects">
+      <div class="project-toolbar">
+        <div>
+          <div style="font-family:var(--font-head);font-size:22px;font-weight:800;">Projects</div>
+          <div style="color:var(--muted);font-size:12px;margin-top:4px;">Create, switch, and delete projects. Requirements, effort, risks, phases, milestones, and activity are stored separately per project.</div>
+        </div>
+        <button class="btn btn-primary" onclick="openModal('modal-project')">+ New Project</button>
+      </div>
+      <div class="project-grid" id="projects-grid"></div>
+    </div>
 
     <!-- DASHBOARD -->
     <div class="page active" id="page-dashboard">
@@ -487,7 +519,7 @@
         <div class="kpi-card green">
           <div class="kpi-label">Hours Logged</div>
           <div class="kpi-value" id="kpi-hours">0</div>
-          <div class="kpi-sub">of 180 planned</div>
+          <div class="kpi-sub">of planned budget</div>
         </div>
         <div class="kpi-card blue">
           <div class="kpi-label">Requirements</div>
@@ -614,7 +646,7 @@
         <div class="kpi-card green">
           <div class="kpi-label">Total Logged</div>
           <div class="kpi-value" id="effort-total">0h</div>
-          <div class="kpi-sub">of 180h budget</div>
+          <div class="kpi-sub">of project budget</div>
         </div>
         <div class="kpi-card blue">
           <div class="kpi-label">This Phase</div>
@@ -629,7 +661,7 @@
         <div class="kpi-card red">
           <div class="kpi-label">Budget Used</div>
           <div class="kpi-value" id="effort-pct">0%</div>
-          <div class="kpi-sub">of $19,440</div>
+          <div class="kpi-sub">of planned cost</div>
         </div>
       </div>
 
@@ -717,6 +749,34 @@
 
   </div><!-- /content -->
 </div><!-- /main -->
+
+
+<!-- ADD PROJECT MODAL -->
+<div class="modal-overlay" id="modal-project">
+  <div class="modal">
+    <div class="modal-title">Create Project</div>
+    <div class="form-group">
+      <label class="form-label">Project Name</label>
+      <input type="text" class="form-control" id="project-name" placeholder="Example: Term Project PMS">
+    </div>
+    <div class="form-group">
+      <label class="form-label">Owner / Lead</label>
+      <input type="text" class="form-control" id="project-owner" placeholder="Project lead name">
+    </div>
+    <div class="form-group">
+      <label class="form-label">Description</label>
+      <input type="text" class="form-control" id="project-desc" placeholder="Brief project description">
+    </div>
+    <div class="form-group">
+      <label class="form-label">Planned Hours</label>
+      <input type="number" class="form-control" id="project-hours" min="1" value="180">
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal('modal-project')">Cancel</button>
+      <button class="btn btn-primary" onclick="submitProject()">Create Project</button>
+    </div>
+  </div>
+</div>
 
 <!-- LOG EFFORT MODAL -->
 <div class="modal-overlay" id="modal-effort">
@@ -825,11 +885,12 @@
 
 <script>
 // ═══════════════════════════════════════════════
-// STATE
+// MULTI-PROJECT STATE
 // ═══════════════════════════════════════════════
-const state = {
-  efforts: [],
-  requirements: [
+const STORAGE_KEY = 'pms_multi_project_state_v2';
+
+function defaultRequirements() {
+  return [
     { id:'REQ-001', module:'General Information', desc:'Create and maintain core project records including title, description, owner, team, status, dates, and risks.', type:'Functional', status:'Open' },
     { id:'REQ-002', module:'Requirements', desc:'Capture, organize, and update functional and non-functional requirements with traceable scope baseline.', type:'Functional', status:'Open' },
     { id:'REQ-003', module:'Effort Tracking', desc:'Log hours by development phase and deliverable to compare planned vs actual effort.', type:'Functional', status:'Open' },
@@ -838,14 +899,18 @@ const state = {
     { id:'REQ-006', module:'Risk', desc:'Record, prioritize, and monitor project risks so PM can respond early.', type:'Functional', status:'Open' },
     { id:'REQ-007', module:'Alerts', desc:'Notify PM when schedule conflicts, missed milestones, or effort overruns are detected.', type:'Non-Functional', status:'Open' },
     { id:'REQ-008', module:'Export', desc:'Export project summaries and reports to PDF/CSV for stakeholder communication.', type:'Functional', status:'Open' },
-  ],
-  risks: [
+  ];
+}
+function defaultRisks() {
+  return [
     { id:'R1', desc:'Uneven team participation, delayed deliverables, or missed individual responsibilities', likelihood:'Medium', impact:'High', mitigation:'Define responsibilities at start of each phase; review in weekly meetings; reassign blocked work early.', status:'Open' },
     { id:'R2', desc:'Technology, software, or version-control issues slow implementation or interrupt collaboration', likelihood:'Medium', impact:'Medium', mitigation:'Use familiar tech stack; set up repository early; create small prototype first; keep backups.', status:'Open' },
     { id:'R3', desc:'Effort for requirement tracking, hour logging, calculations, and reporting is underestimated', likelihood:'Medium', impact:'High', mitigation:'Prioritize core data model and reporting logic early; validate with sample data; reduce lower-priority features if needed.', status:'Open' },
     { id:'R4', desc:'Late integration defects or incomplete testing create quality problems near final deadline', likelihood:'Medium', impact:'High', mitigation:'Integrate code frequently; test each module as completed; reserve dedicated end-stage testing time.', status:'Open' },
-  ],
-  phases: [
+  ];
+}
+function defaultPhases() {
+  return [
     { name:'Requirements', task:'Gather and finalize requirements', weeks:'1', start:0, dur:1, status:'Complete', planned:15, logged:0, color:'var(--accent)' },
     { name:'Design', task:'Architecture and UI design', weeks:'2-3', start:1, dur:2, status:'In Progress', planned:30, logged:0, color:'var(--accent4)' },
     { name:'Prototyping', task:'Coding / Implementation', weeks:'4-5', start:3, dur:2, status:'Upcoming', planned:60, logged:0, color:'var(--accent3)' },
@@ -853,34 +918,133 @@ const state = {
     { name:'Implementing', task:'Go live planning', weeks:'9', start:8, dur:1, status:'Upcoming', planned:0, logged:0, color:'#e5c07b' },
     { name:'Documentation', task:'Finalize documentation', weeks:'10', start:9, dur:1, status:'Upcoming', planned:20, logged:0, color:'#56b6c2' },
     { name:'Delivery', task:'Final Delivery', weeks:'11', start:10, dur:1, status:'Upcoming', planned:15, logged:0, color:'var(--accent2)' },
-  ],
-  milestones: [
+  ];
+}
+function defaultMilestones() {
+  return [
     { title:'Project Kickoff', date:'2026-02-22', status:'done', desc:'Quick Plan submitted; team formed, roles assigned.' },
     { title:'SRS Agreed by Stakeholders', date:'2026-03-01', status:'done', desc:'Software Requirements Specification reviewed and approved.' },
     { title:'Comprehensive Plan Submitted', date:'2026-03-22', status:'done', desc:'All planning docs, WBS, schedule, and cost finalized.' },
     { title:'Prototype Design Complete', date:'2026-04-05', status:'active', desc:'Architecture and UI prototype ready for review.' },
     { title:'UAT Complete', date:'2026-04-26', status:'upcoming', desc:'All test cases passed; user acceptance sign-off.' },
     { title:'Final Delivery', date:'2026-05-03', status:'upcoming', desc:'Completed PMS submitted with documentation and demo.' },
-  ],
-  activityLog: [],
-  reqCounter: 9,
-};
+  ];
+}
+function makeProject(name='Term Project PMS', owner='Andrew Lusk', desc='Project management system for requirements, effort, schedule, risks, and reporting.', plannedHours=180) {
+  const id = 'P-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2,6);
+  return { id, name, owner, desc, plannedHours:Number(plannedHours)||180, created:new Date().toLocaleDateString(), efforts:[], requirements:defaultRequirements(), risks:defaultRisks(), phases:defaultPhases(), milestones:defaultMilestones(), activityLog:[], reqCounter:9 };
+}
+const app = loadApp();
+let state = currentProject();
+let currentPage = 'dashboard';
+
+function loadApp() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(STORAGE_KEY));
+    if (saved?.projects?.length) return saved;
+  } catch(e) {}
+  const project = makeProject();
+  return { activeProjectId: project.id, projects: [project] };
+}
+function saveApp() { localStorage.setItem(STORAGE_KEY, JSON.stringify(app)); }
+function currentProject() { return app.projects.find(p => p.id === app.activeProjectId) || app.projects[0]; }
+function refreshProjectBinding() { state = currentProject(); saveApp(); renderProjectSwitcher(); }
+function totalPlannedHours() { return state.plannedHours || state.phases.reduce((s,p)=>s+(Number(p.planned)||0),0) || 180; }
+
+function recomputePhaseLogged() {
+  state.phases.forEach(p => p.logged = 0);
+  const phaseMap = {
+    'Requirements Analysis': 0, 'Design': 1, 'Coding': 2,
+    'Testing': 3, 'Documentation': 5, 'Project Management': 6
+  };
+  state.efforts.forEach(e => {
+    const idx = phaseMap[e.phase];
+    if (idx !== undefined && state.phases[idx]) state.phases[idx].logged += Number(e.hours) || 0;
+  });
+}
+
+function plannedCost() { return Math.round(totalPlannedHours() * 108); }
+
+function renderProjectSwitcher() {
+  const sel = document.getElementById('project-switcher');
+  if (!sel) return;
+  sel.innerHTML = app.projects.map(p => `<option value="${p.id}" ${p.id===app.activeProjectId?'selected':''}>${escapeHtml(p.name)}</option>`).join('');
+}
+function switchProject(id) {
+  app.activeProjectId = id;
+  refreshProjectBinding();
+  renderPage(currentPage);
+}
+function submitProject() {
+  const name = document.getElementById('project-name').value.trim();
+  if (!name) return;
+  const owner = document.getElementById('project-owner').value.trim() || 'Unassigned';
+  const desc = document.getElementById('project-desc').value.trim() || 'No description provided.';
+  const hours = document.getElementById('project-hours').value || 180;
+  const project = makeProject(name, owner, desc, hours);
+  app.projects.push(project);
+  app.activeProjectId = project.id;
+  closeModal('modal-project');
+  document.getElementById('project-name').value = '';
+  document.getElementById('project-owner').value = '';
+  document.getElementById('project-desc').value = '';
+  document.getElementById('project-hours').value = 180;
+  refreshProjectBinding();
+  nav('projects');
+}
+function deleteProject(id) {
+  if (app.projects.length === 1) { alert('At least one project is required.'); return; }
+  const project = app.projects.find(p=>p.id===id);
+  if (!confirm(`Delete "${project?.name || 'this project'}" and all scoped data?`)) return;
+  app.projects = app.projects.filter(p => p.id !== id);
+  if (app.activeProjectId === id) app.activeProjectId = app.projects[0].id;
+  refreshProjectBinding();
+  renderProjects();
+  renderPage(currentPage === 'projects' ? 'projects' : currentPage);
+}
+function renderProjects() {
+  const grid = document.getElementById('projects-grid');
+  if (!grid) return;
+  grid.innerHTML = app.projects.map(p => {
+    const hours = p.efforts.reduce((s,e)=>s+e.hours,0);
+    const completeReqs = p.requirements.filter(r=>r.status==='Complete').length;
+    const openRisks = p.risks.filter(r=>r.status==='Open').length;
+    return `<div class="project-card ${p.id===app.activeProjectId?'active':''}" onclick="switchProject('${p.id}')">
+      <div class="project-name">${escapeHtml(p.name)}</div>
+      <div class="project-meta">Lead: ${escapeHtml(p.owner || 'Unassigned')}<br>${escapeHtml(p.desc || '')}</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px;">
+        <span class="badge badge-green">${hours}h logged</span>
+        <span class="badge badge-blue">${completeReqs}/${p.requirements.length} reqs done</span>
+        <span class="badge ${openRisks?'badge-yellow':'badge-green'}">${openRisks} open risks</span>
+      </div>
+      <div class="project-card-actions">
+        <button class="btn btn-primary btn-sm" onclick="event.stopPropagation(); switchProject('${p.id}'); nav('dashboard');">Open</button>
+        <button class="btn btn-danger btn-sm" onclick="event.stopPropagation(); deleteProject('${p.id}');">Delete</button>
+      </div>
+    </div>`;
+  }).join('');
+}
+function escapeHtml(str='') {
+  return String(str).replace(/[&<>'"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
+}
 
 // ═══════════════════════════════════════════════
 // NAVIGATION
 // ═══════════════════════════════════════════════
 const PAGE_TITLES = {
-  dashboard:'Dashboard', schedule:'Schedule', milestones:'Milestones',
+  projects:'Projects', dashboard:'Dashboard', schedule:'Schedule', milestones:'Milestones',
   requirements:'Requirements', effort:'Effort Log', risks:'Risk Assessment',
   team:'Team Members', communication:'Communication Plan', reports:'Reports'
 };
 const PAGE_ACTIONS = {
+  projects: `<button class="btn btn-primary btn-sm" onclick="openModal('modal-project')">+ New Project</button>`,
   requirements: `<button class="btn btn-primary btn-sm" onclick="openModal('modal-req')">+ Add Requirement</button>`,
   effort: `<button class="btn btn-primary btn-sm" onclick="openModal('modal-effort')">+ Log Hours</button>`,
   risks: `<button class="btn btn-primary btn-sm" onclick="openModal('modal-risk')">+ Add Risk</button>`,
 };
 
 function nav(page) {
+  currentPage = page;
   document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
   document.querySelectorAll('.nav-item').forEach(i => i.classList.remove('active'));
   document.getElementById('page-' + page).classList.add('active');
@@ -893,6 +1057,9 @@ function nav(page) {
 }
 
 function renderPage(page) {
+  saveApp();
+  renderProjectSwitcher();
+  if (page === 'projects') renderProjects();
   if (page === 'dashboard') renderDashboard();
   if (page === 'schedule') renderSchedule();
   if (page === 'milestones') renderMilestones();
@@ -1016,10 +1183,11 @@ function cyclePhaseStatus(idx) {
 // ═══════════════════════════════════════════════
 function checkAlerts() {
   const total = state.efforts.reduce((s,e) => s+e.hours, 0);
+  const planned = totalPlannedHours();
   const banner = document.getElementById('alert-banner');
   const text = document.getElementById('alert-text');
   const alerts = [];
-  if (total > 162) alerts.push(`⚠ Effort at ${Math.round(total/180*100)}% — approaching budget limit!`);
+  if (total > planned * 0.9) alerts.push(`⚠ Effort at ${Math.round(total/planned*100)}% — approaching budget limit!`);
   const openHighRisks = state.risks.filter(r => r.status==='Open' && r.impact==='High');
   if (openHighRisks.length > 0) alerts.push(`${openHighRisks.length} high-impact risks still open`);
   if (alerts.length) { banner.style.display='flex'; text.textContent = alerts.join(' · '); }
@@ -1031,19 +1199,23 @@ function checkAlerts() {
 // ═══════════════════════════════════════════════
 
 function renderDashboard() {
+  recomputePhaseLogged();
+  saveApp();
   const totalLogged = state.efforts.reduce((s,e) => s+e.hours, 0);
+  const planned = totalPlannedHours();
   const completed = state.requirements.filter(r => r.status==='Complete').length;
   const openRisks = state.risks.filter(r => r.status==='Open').length;
   const donePhases = state.phases.filter(p => p.status==='Complete').length;
   const taskPct = Math.round(donePhases / state.phases.length * 100);
 
   document.getElementById('kpi-hours').textContent = totalLogged + 'h';
+  document.querySelector('#kpi-hours').nextElementSibling.textContent = `of ${planned} planned`;
   document.getElementById('kpi-reqs').textContent = state.requirements.length;
   document.getElementById('kpi-reqs-sub').textContent = `${completed} complete / ${state.requirements.length - completed} open`;
   document.getElementById('kpi-risks').textContent = openRisks;
   document.getElementById('kpi-tasks').textContent = taskPct + '%';
 
-  const accuracyPct = Math.min(Math.round(totalLogged / 180 * 100), 100);
+  const accuracyPct = Math.min(Math.round(totalLogged / planned * 100), 100);
   document.getElementById('kpi-accuracy').textContent = accuracyPct + '%';
   document.getElementById('bar-accuracy').style.width = accuracyPct + '%';
   document.getElementById('kpi-completion').textContent = taskPct + '%';
@@ -1062,13 +1234,13 @@ function renderDashboard() {
 
   // Effort chart
   const phaseNames = ['Req', 'Design', 'Code', 'Test', 'Impl', 'Docs', 'PM'];
-  const planned = [15,30,60,40,0,20,15];
+  const plannedBars = state.phases.map(p => p.planned);
   const logged = state.phases.map(p => p.logged);
-  const maxV = Math.max(...planned, 1);
+  const maxV = Math.max(...plannedBars, 1);
   const ec = document.getElementById('effort-chart');
   ec.innerHTML = state.phases.map((p,i) => {
     const loggedH = Math.round(logged[i]/maxV*80);
-    const planH = Math.round(planned[i]/maxV*80);
+    const planH = Math.round(plannedBars[i]/maxV*80);
     return `<div class="bar-col">
       <div style="position:relative;width:100%;height:80px;display:flex;align-items:flex-end;gap:2px;">
         <div class="bar-fill" style="height:${planH}px;background:rgba(107,114,128,0.3);flex:1;"></div>
@@ -1176,12 +1348,16 @@ function renderRequirements() {
 }
 
 function renderEffort() {
+  recomputePhaseLogged();
+  saveApp();
   const total = state.efforts.reduce((s,e) => s+e.hours, 0);
-  const remaining = Math.max(0, 180 - total);
-  const pct = Math.round(total/180*100);
-  const cost = Math.round(total/180*19440);
+  const planned = totalPlannedHours();
+  const remaining = Math.max(0, planned - total);
+  const pct = Math.round(total/planned*100);
+  const cost = Math.round(total/planned*plannedCost());
 
   document.getElementById('effort-total').textContent = total + 'h';
+  document.querySelector('#effort-total').nextElementSibling.textContent = `of ${planned}h budget`;
   document.getElementById('effort-remaining').textContent = remaining + 'h';
   document.getElementById('effort-pct').textContent = pct + '%';
 
@@ -1268,24 +1444,26 @@ function renderTeam() {
 
 function renderReports() {
   const total = state.efforts.reduce((s,e)=>s+e.hours,0);
+  const planned = totalPlannedHours();
+  const budget = plannedCost();
   const completed = state.requirements.filter(r=>r.status==='Complete').length;
   const openRisks = state.risks.filter(r=>r.status==='Open').length;
   const donePhases = state.phases.filter(p=>p.status==='Complete').length;
-  const cost = Math.round(total/180*19440);
+  const cost = Math.round(total/planned*budget);
 
   document.getElementById('report-content').innerHTML = `
     <table style="margin-bottom:20px;">
       <thead><tr><th>Metric</th><th>Planned</th><th>Actual</th><th>Status</th></tr></thead>
       <tbody>
-        <tr><td>Total Hours</td><td>180h</td><td>${total}h</td><td><span class="badge ${total>180?'badge-red':'badge-green'}">${total>180?'Over Budget':'On Track'}</span></td></tr>
-        <tr><td>Budget Spent</td><td>$19,440</td><td>$${cost.toLocaleString()}</td><td><span class="badge badge-blue">${Math.round(total/180*100)}%</span></td></tr>
+        <tr><td>Total Hours</td><td>${planned}h</td><td>${total}h</td><td><span class="badge ${total>180?'badge-red':'badge-green'}">${total>180?'Over Budget':'On Track'}</span></td></tr>
+        <tr><td>Budget Spent</td><td>$${budget.toLocaleString()}</td><td>$${cost.toLocaleString()}</td><td><span class="badge badge-blue">${Math.round(total/planned*100)}%</span></td></tr>
         <tr><td>Requirements</td><td>${state.requirements.length}</td><td>${completed} complete</td><td><span class="badge badge-yellow">${Math.round(completed/state.requirements.length*100)||0}%</span></td></tr>
         <tr><td>Phases Complete</td><td>${state.phases.length}</td><td>${donePhases}</td><td><span class="badge badge-blue">${Math.round(donePhases/state.phases.length*100)}%</span></td></tr>
         <tr><td>Open Risks</td><td>0 (target)</td><td>${openRisks}</td><td><span class="badge ${openRisks>0?'badge-red':'badge-green'}">${openRisks > 0 ? 'Action Required' : 'Clear'}</span></td></tr>
       </tbody>
     </table>
     <div style="padding:16px;background:var(--surface2);border-radius:var(--radius);font-size:12px;line-height:1.8;color:var(--muted);">
-      <strong style="color:var(--text);">Summary:</strong> The Project Management System has logged ${total}h of ${180}h planned (${Math.round(total/180*100)}%). 
+      <strong style="color:var(--text);">Summary:</strong> The Project Management System has logged ${total}h of ${planned}h planned (${Math.round(total/planned*100)}%). 
       ${completed} of ${state.requirements.length} requirements are marked complete. 
       ${donePhases} of ${state.phases.length} development phases are finished. 
       ${openRisks} risk${openRisks!==1?'s':''} remain${openRisks===1?'s':''} open and require attention.
@@ -1310,6 +1488,7 @@ function printReport() { window.print(); }
 // ═══════════════════════════════════════════════
 // INIT
 // ═══════════════════════════════════════════════
+refreshProjectBinding();
 renderDashboard();
 </script>
 </body>
